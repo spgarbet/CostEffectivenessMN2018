@@ -1,7 +1,7 @@
 ---
-title: "Notes"
+title: "Notes and Exercises"
 author: "Shawn Garbett"
-date: "7/24/2018"
+date: "7/24-26/2018"
 output: html_document
 ---
 
@@ -15,6 +15,8 @@ library(scales)
 library(ellipse)
 library(truncnorm)
 library(reshape2)
+library(plotrix)
+library(lhs)
 knitr::opts_chunk$set(echo = TRUE)
 source("Functions.R")
 ```
@@ -574,4 +576,239 @@ ceaf(v.wtp = wtp, strategies = strategies, m.e = qalys, m.c = costs)$gg.ceaf
 
 ```{r}
 plot(evpi(v.wtp = wtp, m.e = qalys, m.c = costs))
+```
+
+## Exercise: Calibration of the Sick-Sicker Model
+
+As you may recall, the Sick-Sicker model simulates the progression of a cohort of
+healthy 25-year-olds at risk of developing a hypothetical disease with two stages of
+illness: a Sick state (S1) and a Sicker state (S2). Individuals in S1 have increased
+mortality, increased healthcare costs, and decreased quality of life relative to those
+in the Healthy state. Individuals in S2 have even greater increases in mortality,
+costs, and quality of life reductions.
+
+Previously, you were provided with a full set of input parameters for this model.
+However, “in reality” some of those input parameters can’t feasibly be estimated
+directly from individual-level data and need to be estimated through calibration.
+This is because while we can identify those who are afflicted with the illness
+through obvious symptoms, we can’t easily distinguish those in the S1 state from
+the those in the S2 state. Thus, we can’t directly estimate state-specific mortality
+hazard ratios, nor do we know the transition probability of progressing from S1 to
+S2.
+
+There are three calibration targets to be used in this example: (1) observed
+survival of a cohort over time; (2) disease prevalence in a cohort over time; and
+(3) among sick patients (S1+S2), the proportion who are in the S1 state at three
+points in time. The first two targets came from an observational study of a typical
+cohort of individuals. The third target was obtained by subjecting ill patients to an
+invasive procedure which can determine disease stage, but can’t be used routinely
+due to its invasiveness.
+
+The calibration target values are provided in the data file
+“SickSickerTargets.RData”, which contains a list with three data frames: Surv, Prev,
+and PropSick.
+The tasks below will guide you through the process of calibrating the Sick-Sicker
+model to estimate values for the unknown input parameters.
+
+* Adapt the function of the Sick-Sicker Markov model R code in “Markov_Sick-
+Sicker - SA - Function.R” so that the model returns model outputs that
+correspond to the calibration targets. Make this model into a function that
+can be called in the calibration process.
+* Load the calibration targets and plot them over time.
+* Implement a random search of the unknown parameters using Latin
+hypercube sampling. Plot a histogram of the sampled parameter values.
+* Run the Sick-Sicker Markov model for each of the sample parameter sets and
+store the relevant model outputs.
+* Calculate the fit of each model output to the calibration targets using a
+normal likelihood goodness-of-fit and identify the best-fitting parameter set.
+* Plot the model outputs corresponding to the best-fitting parameter set
+against each calibration target. Visually, is the model well-calibrated to the
+targets?
+
+```{r}
+load("SickSickerTargets.RData")
+plotrix::plotCI(x = 1:n.t, y = l.targets$Surv$value, 
+                ui = l.targets$Surv$ub,
+                li = l.targets$Surv$lb,
+                ylim = c(0, 1), 
+                xlab = "Time", ylab = "Survival")
+```
+
+```{r}
+plotrix::plotCI(x = 1:n.t, y = l.targets$Prev$value, 
+                ui = l.targets$Prev$ub,
+                li = l.targets$Prev$lb,
+                ylim = c(0, 1), 
+                xlab = "Time", ylab = "Prevalance")
+```
+
+```{r}
+plotrix::plotCI(x = l.targets$PropSick$Time, y = l.targets$PropSick$value, 
+                ui = l.targets$PropSick$ub,
+                li = l.targets$PropSick$lb,
+                ylim = c(0, 1), 
+                xlab = "Time", ylab = "Proportion Sick")
+```
+
+```{r}
+MM.SickSicker <- function(params)
+{
+  with(as.list(params), {
+    cohort.tr <- matrix(
+      c(
+        0,     p.HS1,     0,      p.HD,
+        p.S1H,     0,     p.S1S2, hrf(p.HD,hr.S1D), 
+        0,         0,     0,      hrf(p.HD,hr.S2D),
+        0,         0,     0,      0
+      ), 
+      dimnames=list(v.n, v.n),
+      nrow=length(v.n), byrow=TRUE
+    )
+    diag(cohort.tr)     <- 1 - rowSums(cohort.tr)
+    markov(0:n.t, cohort.tr, c(1, 0, 0, 0))
+  })
+}
+
+mle.SickSicker <- function(params)
+{
+  solution   <- MM.SickSicker(params)
+  
+  survival   <- 1-solution[2:(n.t+1),4]
+  prevalance <- rowSums(solution[2:(n.t+1),c(2,3)]) / survival
+  sick       <- solution[c(10, 20, 30), 2] / prevalance[c(10, 20, 30)]
+  
+  sum(dnorm(x    = l.targets$Surv$value, 
+            mean = survival, 
+            sd   = l.targets$Surv$se, 
+            log  = TRUE)) +
+  sum(dnorm(x    = l.targets$Prev$value, 
+            mean = prevalance, 
+            sd   = l.targets$Prev$se, 
+            log  = TRUE)) +
+  sum(dnorm(x    = l.targets$PropSick$value, 
+            mean = sick, 
+            sd   = l.targets$PropSick$se, 
+            log  = TRUE))
+}
+
+gen_lhs <- function(n = 10000, seed = 071918)
+{
+  set.seed(seed)
+  lhs.samp <- randomLHS(n = n, k = 3)
+  
+  data.frame(
+    ### Probabilities
+    p.HS1  =     0.15,            # Disease Onset Probability / year       (H  -> S1)
+    p.S1H  =     0.5,             # Recovery Probability / year            (S1 -> H)
+    p.S1S2 = qunif(lhs.samp[,1], 0.01, 0.5), # Disease Progression Probability / year (S1 -> S2)
+    p.HD   =     0.005,           # Healthy to Dead probability / year     (H  -> D)
+    hr.S1D = qunif(lhs.samp[,2], 1, 4.5),   # Hazard ratio in S1 vs healthy 
+    hr.S2D = qunif(lhs.samp[,3], 5, 15)     # Hazard ratio in S2 vs healthy
+  )
+}
+
+lhs.grid <- gen_lhs()
+cal   <- apply(lhs.grid, 1, mle.SickSicker)
+hist(cal, freq=TRUE, main="Calibration Likelihoods")
+```
+
+```{r}
+mle.lhs <- lhs.grid[which.max(cal),]
+mle.lhs
+```
+
+```{r}
+plotrix::plotCI(x = 1:n.t, y = l.targets$Surv$value, 
+                ui = l.targets$Surv$ub,
+                li = l.targets$Surv$lb,
+                ylim = c(0.5, 1), 
+                xlab = "Time", ylab = "Pr Survive")
+solution <- MM.SickSicker(mle.lhs)
+survival <- (1-solution[,4])[2:(n.t+1)]
+lines(x=1:n.t, survival, col='red', lty=2, lwd=2)
+```
+
+
+```{r}
+plotrix::plotCI(x = 1:n.t, y = l.targets$Prev$value, 
+                ui = l.targets$Prev$ub,
+                li = l.targets$Prev$lb,
+                ylim = c(0, 1), 
+                xlab = "Time", ylab = "Prevalance")
+prevalance <- rowSums(solution[2:(n.t+1),c(2,3)]) / survival
+lines(x=1:n.t, prevalance, col='red', lty=2, lwd=2)
+```
+
+```{r}
+plotrix::plotCI(x = l.targets$PropSick$Time, y = l.targets$PropSick$value, 
+                ui = l.targets$PropSick$ub,
+                li = l.targets$PropSick$lb,
+                ylim = c(0, 1), 
+                xlab = "Time", ylab = "Proportion Sick")
+sick <- solution[c(10, 20, 30), 2] / prevalance[c(10, 20, 30)]
+lines(x=c(10, 20, 30), sick, col='red', lty=2, lwd=2)
+```
+
+```{r}
+levels.vec <- round(quantile(cal, seq(0.1, 0.9, by=0.1)))
+
+par(mfrow=c(1,3))
+
+x <- seq(0.01, 0.5, by=0.01)        # p.S1S2
+y <- seq(1,    4.5, by=0.07142857)  # hr.S1D
+z <- matrix(data=NA, nrow=50, ncol=50)
+for(i in 1:50)
+{
+  for(j in 1:50)
+  {
+    ref <- mle.lhs
+    ref$p.S1S2 <- x[i]
+    ref$hr.S1D <- y[j]
+    z[i,j] <- mle.SickSicker(ref)
+  }
+}
+
+contour(x,y,z,
+        levels=levels.vec,
+        xlab='p.S1S2',ylab='hr.S1D')
+points(mle.lhs$p.S1S2, mle.lhs$hr.S1D, pch = 2, col = "red", cex = 2)
+legend("topright", c("LHS MLE"), col = c("red"), pch = c(2))
+
+x <- seq(0.01, 0.5, by=0.01)    # p.S1S2
+y <- seq(5,    15, by=10/49)  # hr.S2D
+for(i in 1:50)
+{
+  for(j in 1:50)
+  {
+    ref <- mle.lhs
+    ref$p.S1S2 <- x[i]
+    ref$hr.S2D <- y[j]
+    z[i,j] <- mle.SickSicker(ref)
+  }
+}
+    
+contour(x,y,z,
+        levels=levels.vec,
+        xlab='p.S1S2',ylab='hr.S2D')
+points(mle.lhs$p.S1S2, mle.lhs$hr.S2D, pch = 2, col = "red", cex = 2)
+legend("topright", c("LHS MLE"), col = c("red"), pch = c(2))
+
+x <- seq(1,    4.5, by=0.07142857)  # hr.S1D
+y <- seq(5,    15, by=10/49)        # hr.S2D
+for(i in 1:50)
+{
+  for(j in 1:50)
+  {
+    ref <- mle.lhs
+    ref$hr.S1D <- x[i]
+    ref$hr.S2D <- y[j]
+    z[i,j] <- mle.SickSicker(ref)
+  }
+}
+    
+contour(x,y,z,
+        levels=levels.vec,
+        xlab='hr.S1D',ylab='hr.S2D')
+points(mle.lhs$hr.S1D, mle.lhs$hr.S2D, pch = 2, col = "red", cex = 2)
+legend("topright", c("LHS MLE"), col = c("red"), pch = c(2))
 ```
