@@ -13,6 +13,8 @@ library(ggplot2)
 library(dampack)
 library(scales)
 library(ellipse)
+library(truncnorm)
+library(reshape2)
 knitr::opts_chunk$set(echo = TRUE)
 source("Functions.R")
 ```
@@ -400,9 +402,9 @@ m.ce <- data.frame(Strategy = c("No Treatment", "Treatment") ,
 results$ICER <- NA
 results$ICER[2] <- render_f((results[2,2]-results[1,2])/(results[2,4]-results[1,4]), 0)
 
-results$dCost          <- render_f(results$dCost, 0)
+results$dCost             <- render_f(results$dCost,             0)
 results$'Life Expectancy' <- render_f(results$'Life Expectancy', 2)
-results$dQALYs         <- render_f(results$dQALYs, 2)
+results$dQALYs            <- render_f(results$dQALYs,            2)
 
 tangram(results, id="tbl2", caption="Markov Results", style="nejm", as.character=TRUE)
 ```
@@ -421,3 +423,155 @@ plot.frontier(CEmat = m.ce, frontier = getFrontier(m.ce, plot = F))
 Thus concluding Day 1. 
 
 # Day 2
+
+## Exercise: Probabilistic sensitivity analysis of the Sick-Sicker Markov model
+
+This exercise continues based on the time-homogeneous deterministic Markov
+model of the Sick-Sicker model from exercise “Exercise-
+SickSickerMarkovModel.docx”. In this exercise, you will do a probabilistic sensitivity
+analysis (PSA) with 1000 simulations (n.sim). The Table describes the distributions
+for the variables you used in the previous exercise.
+
+### Tasks
+
+1. Use the R function of the Sick-Sicker Markov model in the file “Markov_Sick-
+Sicker - SA – Function.R”.
+2. Generate values for the uncertain parameters using the appropriate
+distributions. *Hint: package truncnorm deals with truncated normal distributions.*
+3. Conduct a probabilistic Cost-Effectiveness analysis of treatment vs no-
+treatment
+4. Create histograms of model inputs.
+5. Create a cost-effectiveness plane to present discounted costs and QALYs.
+6. Create a cost-effectiveness acceptability curve for the treatment comparison
+assuming WTP thresholds of $0 to $200,000.
+7. Create an expected value of perfect information (EVPI) plot. Expected Value
+of Perfect Information (EVPI)
+
+```{r}
+rm(list=ls())
+source('Functions.R')
+
+d.r <- 0.03
+n.t <- 30
+
+hrf <- function(p, h, delta=1)
+{
+  r <- -log(1-p)/delta
+  1-exp(-r*h*delta)
+}
+
+discount <- 1 / (1 + d.r) ^ (0:n.t)
+
+`%^%` <- function(m, n)
+{
+  if(n==0) return(diag(rep(1, dim(m)[1])))
+  if(n==1) return(m)
+  if(n==2) return(m %*% m)
+  
+  m %*% (m %^% (n-1))
+}
+
+markov <- function(time, m, i)
+{
+  result <- t(Vectorize(function(time, m, i) i %*% (m %^% time), vectorize.args="time")(time, m, i))
+  colnames(result) <- colnames(m)
+  result
+}
+
+MM.SickSicker <- function(params)
+{
+  with(as.list(params), {
+    cohort.tr <- matrix(
+      c(
+        0,     p.HS1,     0,      p.HD,
+        p.S1H,     0,     p.S1S2, hrf(p.HD,hr.S1D), 
+        0,         0,     0,      hrf(p.HD,hr.S2D),
+        0,         0,     0,      0
+      ), 
+      dimnames=list(v.n, v.n),
+      nrow=length(v.n), byrow=TRUE
+    )
+    diag(cohort.tr)     <- 1 - rowSums(cohort.tr)
+    solution <- markov(0:n.t, cohort.tr, c(1, 0, 0, 0))
+    
+    # No Treat
+    tc_no_trt   <- solution %*% c(c.H, c.S1, c.S2, c.D)
+    tu_no_trt   <- solution %*% c(u.H, u.S1, u.S2, u.D)
+    d_tc_no_trt <-  t(tc_no_trt) %*% discount
+    d_tu_no_trt <-  t(tu_no_trt) %*% discount
+    
+    # Treat
+    tc_trt   <- solution %*% c(c.H, c.S1+c.Trt, c.S2+c.Trt, c.D) 
+    tu_trt   <- solution %*% c(u.H, u.Trt, u.S2, u.D) 
+    d_tc_trt <-  t(tc_trt) %*% discount
+    d_tu_trt <-  t(tu_trt) %*% discount  
+    
+    c(d_cost_no_trt = d_tc_no_trt,
+      d_qaly_no_trt = d_tu_no_trt,
+      d_cost_trt    = d_tc_trt,
+      d_qaly_trt    = d_tu_trt)
+  })
+}
+
+# Parameters
+v.n    <- c("Healthy", "Sick", "Sicker", "Dead")
+
+### Function to generate PSA input dataset
+gen_psa <- function(n = 1000, seed = 071818)
+{
+  set.seed(seed)
+  ### Dataframe of input parameters
+  data.frame(
+    ### Probabilities
+    p.HS1  = rbeta(n, 30,  170),         # Disease Onset Probability / year       (H  -> S1)
+    p.S1H  = rbeta(n, 60,   60),         # Recovery Probability / year            (S1 -> H)
+    p.S1S2 = rbeta(n, 84,  716),         # Disease Progression Probability / year (S1 -> S2)
+    p.HD   = rbeta(n, 10, 1990),         # Healthy to Dead probability / year     (H  -> D)
+    hr.S1D = rlnorm(n, log( 3), 0.01),   # Hazard ratio in S1 vs healthy 
+    hr.S2D = rlnorm(n, log(10), 0.02),   # Hazard ratio in S2 vs healthy
+    
+    ### Annual Costs
+    c.H    = rgamma(n, 100, 1/20),       # Healthy individuals 
+    c.S1   = rgamma(n, 1600/9, 4/90),    # Sick individuals in S1
+    c.S2   = rgamma(n, 255, 3/200),      # Sick individuals in S2
+    c.Trt  = rgamma(n, 73.46939, 3/490), # Additional Annual cost for S1 and S2
+    c.D    = 0,                          # Dead individuals
+
+    # Utility Weights
+    u.H    = rtruncnorm(n, mean=1,    sd=0.01, b=1),   # Healthy
+    u.S1   = rtruncnorm(n, mean=0.75, sd=0.02, b=1),   # S1
+    u.S2   = rtruncnorm(n, mean=0.5,  sd=0.03, b=1),   # S2
+    u.D    = 0,                                        # Dead
+
+    # Intervention Effect
+    u.Trt  = rtruncnorm(n, mean=0.95, sd=0.02, b=1)    # S1 Utility for treatment in S1
+  )
+}
+
+n.sim <- 1000
+n.str <- 2 # Number of strategies
+
+m.psa.input <- gen_psa(n.sim)
+ggplot(melt(m.psa.input, variable.name = "Parameter"), aes(x = value)) +
+  facet_wrap(~Parameter, scales = "free") +
+  geom_histogram(aes(y = ..density..), bins=30) +
+  theme_bw(base_size = 8)
+```
+
+```{r}
+strategies <- c("No Treatment", "Treatment")
+psa   <- t(apply(m.psa.input, 1, MM.SickSicker))
+costs <- psa[,c(1, 3)]
+qalys <- psa[,c(2, 4)]
+colnames(costs) <- colnames(qalys) <- strategies
+ScatterCE(strategies = strategies, m.c = costs, m.e = qalys)
+```
+
+```{r}
+wtp <-  seq(0, 200000, by = 10000)
+ceaf(v.wtp = wtp, strategies = strategies, m.e = qalys, m.c = costs)$gg.ceaf
+```
+
+```{r}
+plot(evpi(v.wtp = wtp, m.e = qalys, m.c = costs))
+```
