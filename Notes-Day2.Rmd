@@ -1,0 +1,374 @@
+---
+title: "Notes and Exercises"
+author: "Shawn Garbett"
+date: "7/24-26/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(msm)
+library(tangram)
+library(dplyr)
+library(ggplot2)
+library(dampack)
+library(scales)
+library(ellipse)
+library(truncnorm)
+library(reshape2)
+library(plotrix)
+library(lhs)
+library(matrixStats)
+knitr::opts_chunk$set(echo = TRUE)
+source("Functions.R")
+```
+
+# Day 2
+
+## Exercise: Probabilistic sensitivity analysis of the Sick-Sicker Markov model
+
+This exercise continues based on the time-homogeneous deterministic Markov
+model of the Sick-Sicker model from exercise “Exercise-
+SickSickerMarkovModel.docx”. In this exercise, you will do a probabilistic sensitivity
+analysis (PSA) with 1000 simulations (n.sim). The Table describes the distributions
+for the variables you used in the previous exercise.
+
+### Tasks
+
+1. Use the R function of the Sick-Sicker Markov model in the file “Markov_Sick-
+Sicker - SA – Function.R”.
+2. Generate values for the uncertain parameters using the appropriate
+distributions. *Hint: package truncnorm deals with truncated normal distributions.*
+3. Conduct a probabilistic Cost-Effectiveness analysis of treatment vs no-
+treatment
+4. Create histograms of model inputs.
+5. Create a cost-effectiveness plane to present discounted costs and QALYs.
+6. Create a cost-effectiveness acceptability curve for the treatment comparison
+assuming WTP thresholds of $0 to $200,000.
+7. Create an expected value of perfect information (EVPI) plot. Expected Value
+of Perfect Information (EVPI)
+
+```{r}
+rm(list=ls())
+source('Functions.R')
+
+d.r <- 0.03
+n.t <- 30
+
+hrf      <- function(p, h) 1-exp(log(1-p)*h)
+discount <- 1 / (1 + d.r) ^ (0:n.t)
+
+# Markov Model solver
+markov <- function(n.t, m, i)
+{
+  y <- unlist(Reduce(function(x, y) x %*% m, 1:n.t, i, accumulate=TRUE))
+  y <- matrix(y, ncol=dim(m)[1], byrow=TRUE)
+  colnames(y) <- colnames(m)
+  y
+}
+
+# Sick Sicker Markov Model
+MM.SickSicker <- function(params)
+{
+  v.n    <- c("Healthy", "Sick", "Sicker", "Dead")
+  with(as.list(params), {
+    cohort.tr <- matrix(
+      c(
+        0,     p.HS1,     0,      p.HD,
+        p.S1H,     0,     p.S1S2, hrf(p.HD,hr.S1D), 
+        0,         0,     0,      hrf(p.HD,hr.S2D),
+        0,         0,     0,      0
+      ), 
+      dimnames=list(v.n, v.n),
+      nrow=length(v.n), byrow=TRUE
+    )
+    diag(cohort.tr)     <- 1 - rowSums(cohort.tr)
+    markov(n.t, cohort.tr, c(1, 0, 0, 0))
+  })
+}
+  
+# Expectation of Sick Sicker Model
+Expect.SickSicker <- function(params)
+{
+  solution <- MM.SickSicker(params)
+  
+  with(as.list(params), {
+    # No Treat
+    tc_no_trt   <- solution %*% c(c.H, c.S1, c.S2, c.D)
+    tu_no_trt   <- solution %*% c(u.H, u.S1, u.S2, u.D)
+    d_tc_no_trt <- t(tc_no_trt) %*% discount
+    d_tu_no_trt <- t(tu_no_trt) %*% discount
+    
+    # Treat
+    tc_trt   <- solution %*% c(c.H, c.S1+c.Trt, c.S2+c.Trt, c.D) 
+    tu_trt   <- solution %*% c(u.H, u.Trt, u.S2, u.D) 
+    d_tc_trt <- t(tc_trt) %*% discount
+    d_tu_trt <-  t(tu_trt) %*% discount  
+    
+    c(d_cost_no_trt = d_tc_no_trt,
+      d_qaly_no_trt = d_tu_no_trt,
+      d_cost_trt    = d_tc_trt,
+      d_qaly_trt    = d_tu_trt)
+  })
+}
+
+### Function to generate PSA input dataset
+gen_psa <- function(n = 1000, seed = 071818)
+{
+  set.seed(seed)
+  ### Dataframe of input parameters
+  data.frame(
+    ### Probabilities
+    p.HS1  = rbeta(n, 30,  170),         # Disease Onset Probability / year       (H  -> S1)
+    p.S1H  = rbeta(n, 60,   60),         # Recovery Probability / year            (S1 -> H)
+    p.S1S2 = rbeta(n, 84,  716),         # Disease Progression Probability / year (S1 -> S2)
+    p.HD   = rbeta(n, 10, 1990),         # Healthy to Dead probability / year     (H  -> D)
+    hr.S1D = rlnorm(n, log( 3), 0.01),   # Hazard ratio in S1 vs healthy 
+    hr.S2D = rlnorm(n, log(10), 0.02),   # Hazard ratio in S2 vs healthy
+    
+    ### Annual Costs
+    c.H    = rgamma(n, 100, 1/20),       # Healthy individuals 
+    c.S1   = rgamma(n, 1600/9, 4/90),    # Sick individuals in S1
+    c.S2   = rgamma(n, 255, 3/200),      # Sick individuals in S2
+    c.Trt  = rgamma(n, 73.46939, 3/490), # Additional Annual cost for S1 and S2
+    c.D    = 0,                          # Dead individuals
+
+    # Utility Weights
+    u.H    = rtruncnorm(n, mean=1,    sd=0.01, b=1),   # Healthy
+    u.S1   = rtruncnorm(n, mean=0.75, sd=0.02, b=1),   # S1
+    u.S2   = rtruncnorm(n, mean=0.5,  sd=0.03, b=1),   # S2
+    u.D    = 0,                                        # Dead
+
+    # Intervention Effect
+    u.Trt  = rtruncnorm(n, mean=0.95, sd=0.02, b=1)    # S1 Utility for treatment in S1
+  )
+}
+
+n.sim <- 1000
+n.str <- 2 # Number of strategies
+
+m.psa.input <- gen_psa(n.sim)
+ggplot(melt(m.psa.input, variable.name = "Parameter"), aes(x = value)) +
+  facet_wrap(~Parameter, scales = "free") +
+  geom_histogram(aes(y = ..density..), bins=30) +
+  theme_bw(base_size = 8)
+```
+
+```{r}
+strategies <- c("No Treatment", "Treatment")
+psa   <- t(apply(m.psa.input, 1, Expect.SickSicker))
+costs <- psa[,c(1, 3)]
+qalys <- psa[,c(2, 4)]
+colnames(costs) <- colnames(qalys) <- strategies
+ScatterCE(strategies = strategies, m.c = costs, m.e = qalys)
+```
+
+```{r}
+wtp <-  seq(0, 200000, by = 10000)
+ceaf(v.wtp = wtp, strategies = strategies, m.e = qalys, m.c = costs)$gg.ceaf
+```
+
+```{r}
+plot(evpi(v.wtp = wtp, m.e = qalys, m.c = costs))
+```
+
+## Exercise: Calibration of the Sick-Sicker Model
+
+As you may recall, the Sick-Sicker model simulates the progression of a cohort of
+healthy 25-year-olds at risk of developing a hypothetical disease with two stages of
+illness: a Sick state (S1) and a Sicker state (S2). Individuals in S1 have increased
+mortality, increased healthcare costs, and decreased quality of life relative to those
+in the Healthy state. Individuals in S2 have even greater increases in mortality,
+costs, and quality of life reductions.
+
+Previously, you were provided with a full set of input parameters for this model.
+However, “in reality” some of those input parameters can’t feasibly be estimated
+directly from individual-level data and need to be estimated through calibration.
+This is because while we can identify those who are afflicted with the illness
+through obvious symptoms, we can’t easily distinguish those in the S1 state from
+the those in the S2 state. Thus, we can’t directly estimate state-specific mortality
+hazard ratios, nor do we know the transition probability of progressing from S1 to
+S2.
+
+There are three calibration targets to be used in this example: (1) observed
+survival of a cohort over time; (2) disease prevalence in a cohort over time; and
+(3) among sick patients (S1+S2), the proportion who are in the S1 state at three
+points in time. The first two targets came from an observational study of a typical
+cohort of individuals. The third target was obtained by subjecting ill patients to an
+invasive procedure which can determine disease stage, but can’t be used routinely
+due to its invasiveness.
+
+The calibration target values are provided in the data file
+“SickSickerTargets.RData”, which contains a list with three data frames: Surv, Prev,
+and PropSick.
+The tasks below will guide you through the process of calibrating the Sick-Sicker
+model to estimate values for the unknown input parameters.
+
+* Adapt the function of the Sick-Sicker Markov model R code in “Markov_Sick-
+Sicker - SA - Function.R” so that the model returns model outputs that
+correspond to the calibration targets. Make this model into a function that
+can be called in the calibration process.
+* Load the calibration targets and plot them over time.
+* Implement a random search of the unknown parameters using Latin
+hypercube sampling. Plot a histogram of the sampled parameter values.
+* Run the Sick-Sicker Markov model for each of the sample parameter sets and
+store the relevant model outputs.
+* Calculate the fit of each model output to the calibration targets using a
+normal likelihood goodness-of-fit and identify the best-fitting parameter set.
+* Plot the model outputs corresponding to the best-fitting parameter set
+against each calibration target. Visually, is the model well-calibrated to the
+targets?
+
+```{r}
+load("SickSickerTargets.RData")
+n.t <- 30
+par(mfrow=c(1,3))
+plotrix::plotCI(x = 1:n.t, y = l.targets$Surv$value, 
+                ui = l.targets$Surv$ub,
+                li = l.targets$Surv$lb,
+                ylim = c(0, 1), 
+                xlab = "Time", ylab = "Survival")
+
+plotrix::plotCI(x = 1:n.t, y = l.targets$Prev$value, 
+                ui = l.targets$Prev$ub,
+                li = l.targets$Prev$lb,
+                ylim = c(0, 1), 
+                xlab = "Time", ylab = "Prevalance")
+
+plotrix::plotCI(x = l.targets$PropSick$Time, y = l.targets$PropSick$value, 
+                ui = l.targets$PropSick$ub,
+                li = l.targets$PropSick$lb,
+                ylim = c(0, 1), 
+                xlab = "Time", ylab = "Proportion Sick")
+```
+
+```{r}
+
+ll.SickSicker <- function(params, summary=FALSE)
+{
+  solution   <- MM.SickSicker(params)
+  
+  survival   <- 1-solution[2:(n.t+1),4]
+  prevalance <- rowSums(solution[2:(n.t+1),c(2,3)]) / survival
+  sick       <- solution[c(11, 21, 31), 2] / prevalance[c(10, 20, 30)]
+  
+  ll <-
+    sum(dnorm(x    = l.targets$Surv$value, 
+              mean = survival, 
+              sd   = l.targets$Surv$se, 
+              log  = TRUE)) +
+    sum(dnorm(x    = l.targets$Prev$value, 
+              mean = prevalance, 
+              sd   = l.targets$Prev$se, 
+              log  = TRUE)) +
+    sum(dnorm(x    = l.targets$PropSick$value, 
+              mean = sick, 
+              sd   = l.targets$PropSick$se, 
+              log  = TRUE))
+  
+  if(summary)
+  {
+    attr(ll, "survival")   <- survival
+    attr(ll, "prevalance") <- prevalance
+    attr(ll, "sick")       <- sick
+  }
+  
+  ll
+}
+
+gen_lhs <- function(n = 10000, seed = 071918)
+{
+  set.seed(seed)
+  lhs.samp <- randomLHS(n = n, k = 3)
+  
+  data.frame(
+    ### Probabilities
+    p.HS1  =     0.15,            # Disease Onset Probability / year       (H  -> S1)
+    p.S1H  =     0.5,             # Recovery Probability / year            (S1 -> H)
+    p.S1S2 = qunif(lhs.samp[,1], 0.01, 0.5), # Disease Progression Probability / year (S1 -> S2)
+    p.HD   =     0.005,           # Healthy to Dead probability / year     (H  -> D)
+    hr.S1D = qunif(lhs.samp[,2], 1, 4.5),   # Hazard ratio in S1 vs healthy 
+    hr.S2D = qunif(lhs.samp[,3], 5, 15)     # Hazard ratio in S2 vs healthy
+  )
+}
+
+lhs.grid <- gen_lhs()
+cal   <- apply(lhs.grid, 1, ll.SickSicker)
+hist(cal, freq=TRUE, main="Calibration Likelihoods")
+```
+
+```{r}
+mll.lhs <- lhs.grid[which.max(cal),]
+mll.lhs
+```
+
+```{r}
+solution <- ll.SickSicker(mll.lhs, summary=TRUE)
+
+par(mfrow=c(1,3))
+plotrix::plotCI(x = 1:n.t, y = l.targets$Surv$value, 
+                ui = l.targets$Surv$ub,
+                li = l.targets$Surv$lb,
+                ylim = c(0.5, 1), 
+                xlab = "Time", ylab = "Pr Survive")
+lines(x=1:n.t, attr(solution, "survival"), col='red', lty=2, lwd=2)
+
+plotrix::plotCI(x = 1:n.t, y = l.targets$Prev$value, 
+                ui = l.targets$Prev$ub,
+                li = l.targets$Prev$lb,
+                ylim = c(0, 1), 
+                xlab = "Time", ylab = "Prevalance")
+lines(x=1:n.t, attr(solution, "prevalance"), col='red', lty=2, lwd=2)
+
+plotrix::plotCI(x = l.targets$PropSick$Time, y = l.targets$PropSick$value, 
+                ui = l.targets$PropSick$ub,
+                li = l.targets$PropSick$lb,
+                ylim = c(0, 1), 
+                xlab = "Time", ylab = "Proportion Sick")
+lines(x=c(10, 20, 30), attr(solution, "sick"), col='red', lty=2, lwd=2)
+```
+
+```{r}
+slice <- function(param1, a1, b1,
+                  param2, a2, b2,
+                  levels, 
+                  optim,
+                  n=50)
+{
+  x <- seq(a1, b1, by=(b1-a1)/(n-1))
+  y <- seq(a2, b2, by=(b2-a2)/(n-1))
+  z <- matrix(data=NA, nrow=50, ncol=50)
+  
+  for(i in 1:50)
+  {
+    for(j in 1:50)
+    {
+      ref <- optim
+      ref[param1] <- x[i]
+      ref[param2] <- y[j]
+      z[i,j]      <- ll.SickSicker(ref)
+    }
+  }
+
+  contour(x, y, z, levels=lines, xlab=param1, ylab=param2)
+  points(optim[param1], optim[param2], pch=2, col="red", cex=2)
+  legend("topright", "LHS MLE", col="red", pch=2)
+}
+
+lines <- round(quantile(cal, seq(0.1, 0.9, by=0.1)))
+
+par(mfrow=c(1,3))
+slice("p.S1S2", 0.01,  0.5,
+      "hr.S1D", 1,     4.5,
+       lines, mll.lhs)
+
+slice("p.S1S2", 0.01,  0.5,
+      "hr.S2D", 5,    15,
+       lines, mll.lhs)
+
+slice("hr.S1D", 1,     4.5,
+      "hr.S2D", 5,    15,
+       lines, mll.lhs)
+
+```
+
+Thus concluding Day 2

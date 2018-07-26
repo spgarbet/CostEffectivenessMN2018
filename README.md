@@ -2,4 +2,8 @@ Attending [Cost-Effectiveness and Decision Modeling using R Workshop](http://www
 
 Very nice group and program they have here.
 
-See [Notes.html](https://cdn.rawgit.com/spgarbet/CostEffectivenessMN2018/master/Notes.html)
+See:
+  * [Day 1 Notes](http://htmlpreview.github.io/?https://github.com/spgarbet/CostEffectivenessMN2018/master/Notes-Day1.html)
+  * [Day 2 Notes](http://htmlpreview.github.io/?https://github.com/spgarbet/CostEffectivenessMN2018/master/Notes-Day2.html)
+  * [Day 3 Notes](http://htmlpreview.github.io/?https://github.com/spgarbet/CostEffectivenessMN2018/master/Notes-Day3.html)
+
