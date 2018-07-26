@@ -667,7 +667,7 @@ MM.SickSicker <- function(params)
   })
 }
 
-mle.SickSicker <- function(params, summary=FALSE)
+ll.SickSicker <- function(params, summary=FALSE)
 {
   solution   <- MM.SickSicker(params)
   
@@ -675,7 +675,7 @@ mle.SickSicker <- function(params, summary=FALSE)
   prevalance <- rowSums(solution[2:(n.t+1),c(2,3)]) / survival
   sick       <- solution[c(11, 21, 31), 2] / prevalance[c(10, 20, 30)]
   
-  mle <-
+  ll <-
     sum(dnorm(x    = l.targets$Surv$value, 
               mean = survival, 
               sd   = l.targets$Surv$se, 
@@ -691,12 +691,12 @@ mle.SickSicker <- function(params, summary=FALSE)
   
   if(summary)
   {
-    attr(mle, "survival")   <- survival
-    attr(mle, "prevalance") <- prevalance
-    attr(mle, "sick")       <- sick
+    attr(ll, "survival")   <- survival
+    attr(ll, "prevalance") <- prevalance
+    attr(ll, "sick")       <- sick
   }
   
-  mle
+  ll
 }
 
 gen_lhs <- function(n = 10000, seed = 071918)
@@ -716,17 +716,17 @@ gen_lhs <- function(n = 10000, seed = 071918)
 }
 
 lhs.grid <- gen_lhs()
-cal   <- apply(lhs.grid, 1, mle.SickSicker)
+cal   <- apply(lhs.grid, 1, ll.SickSicker)
 hist(cal, freq=TRUE, main="Calibration Likelihoods")
 ```
 
 ```{r}
-mle.lhs <- lhs.grid[which.max(cal),]
-mle.lhs
+mll.lhs <- lhs.grid[which.max(cal),]
+mll.lhs
 ```
 
 ```{r}
-solution <- mle.SickSicker(mle.lhs, summary=TRUE)
+solution <- ll.SickSicker(mll.lhs, summary=TRUE)
 
 par(mfrow=c(1,3))
 plotrix::plotCI(x = 1:n.t, y = l.targets$Surv$value, 
@@ -769,7 +769,7 @@ slice <- function(param1, a1, b1,
       ref <- optim
       ref[param1] <- x[i]
       ref[param2] <- y[j]
-      z[i,j]      <- mle.SickSicker(ref)
+      z[i,j]      <- ll.SickSicker(ref)
     }
   }
 
@@ -783,15 +783,15 @@ lines <- round(quantile(cal, seq(0.1, 0.9, by=0.1)))
 par(mfrow=c(1,3))
 slice("p.S1S2", 0.01,  0.5,
       "hr.S1D", 1,     4.5,
-       lines, mle.lhs)
+       lines, mll.lhs)
 
 slice("p.S1S2", 0.01,  0.5,
       "hr.S2D", 5,    15,
-       lines, mle.lhs)
+       lines, mll.lhs)
 
 slice("hr.S1D", 1,     4.5,
       "hr.S2D", 5,    15,
-       lines, mle.lhs)
+       lines, mll.lhs)
 
 ```
 
