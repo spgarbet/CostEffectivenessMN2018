@@ -17,6 +17,7 @@ library(truncnorm)
 library(reshape2)
 library(plotrix)
 library(lhs)
+library(matrixStats)
 knitr::opts_chunk$set(echo = TRUE)
 source("Functions.R")
 ```
