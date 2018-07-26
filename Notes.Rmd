@@ -454,22 +454,7 @@ n.t <- 30
 hrf      <- function(p, h) 1-exp(log(1-p)*h)
 discount <- 1 / (1 + d.r) ^ (0:n.t)
 
-`%^%` <- function(m, n)
-{
-  if(n==0) return(diag(rep(1, dim(m)[1])))
-  if(n==1) return(m)
-  if(n==2) return(m %*% m)
-  
-  m %*% (m %^% (n-1))
-}
-
-markov <- function(time, m, i)
-{
-  result <- t(Vectorize(function(time, m, i) i %*% (m %^% time), vectorize.args="time")(time, m, i))
-  colnames(result) <- colnames(m)
-  result
-}
-
+# Markov Model solver
 markov <- function(n.t, m, i)
 {
   y <- unlist(Reduce(function(x, y) x %*% m, 1:n.t, i, accumulate=TRUE))
@@ -478,6 +463,7 @@ markov <- function(n.t, m, i)
   y
 }
 
+# Sick Sicker Markov Model
 MM.SickSicker <- function(params)
 {
   v.n    <- c("Healthy", "Sick", "Sicker", "Dead")
@@ -493,18 +479,26 @@ MM.SickSicker <- function(params)
       nrow=length(v.n), byrow=TRUE
     )
     diag(cohort.tr)     <- 1 - rowSums(cohort.tr)
-    solution <- markov(n.t, cohort.tr, c(1, 0, 0, 0))
-    
+    markov(n.t, cohort.tr, c(1, 0, 0, 0))
+  })
+}
+  
+# Expectation of Sick Sicker Model
+Expect.SickSicker <- function(params)
+{
+  solution <- MM.SickSicker(params)
+  
+  with(as.list(params), {
     # No Treat
     tc_no_trt   <- solution %*% c(c.H, c.S1, c.S2, c.D)
     tu_no_trt   <- solution %*% c(u.H, u.S1, u.S2, u.D)
-    d_tc_no_trt <-  t(tc_no_trt) %*% discount
-    d_tu_no_trt <-  t(tu_no_trt) %*% discount
+    d_tc_no_trt <- t(tc_no_trt) %*% discount
+    d_tu_no_trt <- t(tu_no_trt) %*% discount
     
     # Treat
     tc_trt   <- solution %*% c(c.H, c.S1+c.Trt, c.S2+c.Trt, c.D) 
     tu_trt   <- solution %*% c(u.H, u.Trt, u.S2, u.D) 
-    d_tc_trt <-  t(tc_trt) %*% discount
+    d_tc_trt <- t(tc_trt) %*% discount
     d_tu_trt <-  t(tu_trt) %*% discount  
     
     c(d_cost_no_trt = d_tc_no_trt,
@@ -513,9 +507,6 @@ MM.SickSicker <- function(params)
       d_qaly_trt    = d_tu_trt)
   })
 }
-
-# Parameters
-
 
 ### Function to generate PSA input dataset
 gen_psa <- function(n = 1000, seed = 071818)
@@ -561,7 +552,7 @@ ggplot(melt(m.psa.input, variable.name = "Parameter"), aes(x = value)) +
 
 ```{r}
 strategies <- c("No Treatment", "Treatment")
-psa   <- t(apply(m.psa.input, 1, MM.SickSicker))
+psa   <- t(apply(m.psa.input, 1, Expect.SickSicker))
 costs <- psa[,c(1, 3)]
 qalys <- psa[,c(2, 4)]
 colnames(costs) <- colnames(qalys) <- strategies
@@ -648,24 +639,6 @@ plotrix::plotCI(x = l.targets$PropSick$Time, y = l.targets$PropSick$value,
 ```
 
 ```{r}
-MM.SickSicker <- function(params)
-{
-  v.n    <- c("Healthy", "Sick", "Sicker", "Dead")
-  with(as.list(params), {
-    cohort.tr <- matrix(
-      c(
-        0,     p.HS1,     0,      p.HD,
-        p.S1H,     0,     p.S1S2, hrf(p.HD,hr.S1D), 
-        0,         0,     0,      hrf(p.HD,hr.S2D),
-        0,         0,     0,      0
-      ), 
-      dimnames=list(v.n, v.n),
-      nrow=length(v.n), byrow=TRUE
-    )
-    diag(cohort.tr)     <- 1 - rowSums(cohort.tr)
-    markov(n.t, cohort.tr, c(1, 0, 0, 0))
-  })
-}
 
 ll.SickSicker <- function(params, summary=FALSE)
 {
