@@ -770,3 +770,138 @@ slice("hr.S1D", 1,     4.5,
 ```
 
 # Day 3
+
+## Exercise: Variations on the Sick-Sicker Markov Model
+
+Previously, you built a Markov of the Sick-Sicker model where transition
+probabilities were assumed to be constant over time. In this exercise, you will
+expand on that model to incorporate age-dependence (time-varying probabilities)
+and history-dependence.
+
+### Part 1: Age-dependence
+
+Healthy individuals are no longer assumed to have a fixed mortality rate. Their
+mortality rate depends on their age. The Human Mortality Database (HMD)
+(www.mortality.org) provides these age specific mortality rates (Mx1x1). You can
+load this data in R using different packages, for example the HMDHFplus,
+demography or data.table package. Registration (free) on the HMD website is
+required in order to use the data. For this exercise, we provide you with this
+mortality rate for the US in the file “HMD_USA_Mx_2015.csv”.
+Remember: individuals in S1 and S2 still have an increased mortality relative to
+healthy individuals, as described in the original exercise. The same hazard ratios
+are used to calculate the probabilities of dying from S1 and S2 in this exercise.
+
+* Use the R function “Markov_Sick-Sicker.R” and create a copy to then adapt
+the model to account for age-dependency.
+* Import the mortality rate data the “HMD_USA_Mx_2015.csv” file and store
+this data in a variable called v.r.HD.
+* Create probability to die when healthy as a function of age
+$ p.HD <- 1 - exp(- v.r.HD*a)$
+* Incorporate the age dependent mortality rate in the model.
+* Create a survival curve of the cohort under no treatment. **Extra challenge: plot the survival curves with and without age-dependent probabilities of death in one graph so you can compare.**
+
+```{r}
+lt.usa.2005 <- read.csv("HMD_USA_Mx_2015.csv")
+
+# Target population is age 25
+p.HD <- 1-exp(-lt.usa.2005[lt.usa.2005$Age >= 25,'Total'])
+
+# This function takes a transition probability matrix and current time
+# Changes the mortality probability to be time based from 
+mortality_ad <- function(m, a)
+{ 
+  m["Healthy", "Dead"]    <- p.HD[a]
+  m["Healthy", "Healthy"] <- 1 - p.HD[a] - m["Healthy", "Sick"]
+  m
+}
+
+# Markov Model solver with time dependent modification function
+markov <- function(n.t, m, i, FUN)
+{
+  y <- unlist(Reduce(function(x, y) x %*% FUN(m, y), 1:n.t, i, accumulate=TRUE))
+  y <- matrix(y, ncol=dim(m)[1], byrow=TRUE)
+  colnames(y) <- colnames(m)
+  y
+}
+
+# Sick Sicker Markov Model (with modified markov method)
+MM.SickSicker <- function(params)
+{
+  v.n    <- c("Healthy", "Sick", "Sicker", "Dead")
+  with(as.list(params), {
+    cohort.tr <- matrix(
+      c(
+        0,     p.HS1,     0,      p.HD,
+        p.S1H,     0,     p.S1S2, hrf(p.HD,hr.S1D), 
+        0,         0,     0,      hrf(p.HD,hr.S2D),
+        0,         0,     0,      0
+      ), 
+      dimnames=list(v.n, v.n),
+      nrow=length(v.n), byrow=TRUE
+    )
+    diag(cohort.tr)     <- 1 - rowSums(cohort.tr)
+    markov(n.t, cohort.tr, c(1, 0, 0, 0), function(m, a) m)
+  })
+}
+
+# Sick Sicker Markov Model with Age Dependence
+MMAG.SickSicker <- function(params)
+{
+  v.n    <- c("Healthy", "Sick", "Sicker", "Dead")
+  with(as.list(params), {
+    cohort.tr <- matrix(
+      c(
+        0,     p.HS1,     0,      p.HD,
+        p.S1H,     0,     p.S1S2, hrf(p.HD,hr.S1D), 
+        0,         0,     0,      hrf(p.HD,hr.S2D),
+        0,         0,     0,      0
+      ), 
+      dimnames=list(v.n, v.n),
+      nrow=length(v.n), byrow=TRUE
+    )
+    diag(cohort.tr)     <- 1 - rowSums(cohort.tr)
+    markov(n.t, cohort.tr, c(1, 0, 0, 0), mortality_ad)
+  })
+}
+
+params <- list(
+  n.t    =    30,
+  
+  p.HS1  =     0.15,   # Disease Onset Probability / year       (H  -> S1)
+  p.S1H  =     0.5,    # Recovery Probability / year            (S1 -> H)
+  p.S1S2 =     0.105,  # Disease Progression Probability / year (S1 -> S2)
+  p.HD   =     0.005,  # Healthy to Dead probability / year     (H  -> D)
+  hr.S1D =     3,      # Hazard ratio in S1 vs healthy 
+  hr.S2D =    10,      # Hazard ratio in S2 vs healthy,
+  
+  # Annual Costs
+  c.H    =  2000,      # Healthy individuals 
+  c.S1   =  4000,      # Sick individuals in S1
+  c.S2   = 15000,      # Sick individuals in S2
+  c.D    =     0,      # Dead individuals
+  c.Trt  = 12000,      # Additional Annual cost for S1 and S2,
+  
+  # Utility Weights
+  u.H    =     1.00,   # Healthy
+  u.S1   =     0.75,   # S1
+  u.S2   =     0.50,   # S2
+  u.D    =     0.00,   # Dead,
+  
+  # Intervention Effect
+  u.Trt  =     0.95    # S1 Utility for treatment in S1
+)
+
+noage <- MM.SickSicker(params)
+w_age <- MMAG.SickSicker(params)
+
+noage_surv <- 1-noage[,"Dead"]
+w_age_surv <- 1-w_age[,"Dead"]
+
+plot(0:params$n.t+25, noage_surv, ylim=c(0,1),
+     xlab="Age", ylab="Survival Probability",
+     main="Overall Survival", typ='l')
+grid(nx = params$n.t, ny = 10, col = "lightgray", lty = "dotted", lwd = par("lwd"), equilogs = TRUE)
+lines(0:params$n.t+25, w_age_surv, lty=2, col='red')
+legend("bottomleft", c("Time Homogeneous", "Age-Dependent"), col=c("black", "red"),
+       lty=1:2)
+```
