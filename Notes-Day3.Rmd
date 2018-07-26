@@ -237,6 +237,7 @@ MMTS.SickSicker <- function(params)
 
 
 tunn_surv <- 1-MMTS.SickSicker(params)[,"Dead"]
+first3    <- rowSums(MMTS.SickSicker(params)[,1:3])
 
 plot(0:params$n.t+25, noage_surv, ylim=c(0,1),
      xlab="Age", ylab="Survival Probability",
@@ -244,6 +245,7 @@ plot(0:params$n.t+25, noage_surv, ylim=c(0,1),
 grid(nx = params$n.t, ny = 10, col = "lightgray", lty = "dotted", lwd = par("lwd"), equilogs = TRUE)
 lines(0:params$n.t+25, w_age_surv, lty=2, col='red')
 lines(0:params$n.t+25, tunn_surv, lty=3, col='blue', lwd=2)
-legend("bottomleft", c("Time Homogeneous", "Age-Dependent", "Tunnels"), col=c("black", "red", "blue"),
-       lty=1:3, lwd=c(1,1,2))
+lines(0:params$n.t+25, first3, lty=4, col='darkgreen', lwd=1)
+legend("bottomleft", c("Time Homogeneous", "Age-Dependent", "Tunnels", "H+S1+S2"), col=c("black", "red", "blue", "darkgreen"),
+       lty=1:4, lwd=c(1,1,2,1))
 ```
