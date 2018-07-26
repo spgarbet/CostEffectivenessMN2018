@@ -290,12 +290,7 @@ u.Trt  <-     0.95   # S1 Utility for treatment in S1
 $r=-\log(1-p)/\Delta$ and $p=1-e^{-r\Delta}$.
 
 ```{r}
-hrf <- function(p, h, delta=1)
-{
-  r <- -log(1-p)/delta
-  1-exp(-r*h*delta)
-}
-
+hrf      <- function(p, h) 1-exp(log(1-p)*h)
 discount <- 1 / (1 + d.r) ^ (0:n.t)
 
 `%^%` <- function(m, n)
@@ -456,12 +451,7 @@ source('Functions.R')
 d.r <- 0.03
 n.t <- 30
 
-hrf <- function(p, h, delta=1)
-{
-  r <- -log(1-p)/delta
-  1-exp(-r*h*delta)
-}
-
+hrf      <- function(p, h) 1-exp(log(1-p)*h)
 discount <- 1 / (1 + d.r) ^ (0:n.t)
 
 `%^%` <- function(m, n)
@@ -480,8 +470,17 @@ markov <- function(time, m, i)
   result
 }
 
+markov <- function(n.t, m, i)
+{
+  y <- unlist(Reduce(function(x, y) x %*% m, 1:n.t, i, accumulate=TRUE))
+  y <- matrix(y, ncol=dim(m)[1], byrow=TRUE)
+  colnames(y) <- colnames(m)
+  y
+}
+
 MM.SickSicker <- function(params)
 {
+  v.n    <- c("Healthy", "Sick", "Sicker", "Dead")
   with(as.list(params), {
     cohort.tr <- matrix(
       c(
@@ -494,7 +493,7 @@ MM.SickSicker <- function(params)
       nrow=length(v.n), byrow=TRUE
     )
     diag(cohort.tr)     <- 1 - rowSums(cohort.tr)
-    solution <- markov(0:n.t, cohort.tr, c(1, 0, 0, 0))
+    solution <- markov(n.t, cohort.tr, c(1, 0, 0, 0))
     
     # No Treat
     tc_no_trt   <- solution %*% c(c.H, c.S1, c.S2, c.D)
@@ -516,7 +515,7 @@ MM.SickSicker <- function(params)
 }
 
 # Parameters
-v.n    <- c("Healthy", "Sick", "Sicker", "Dead")
+
 
 ### Function to generate PSA input dataset
 gen_psa <- function(n = 1000, seed = 071818)
@@ -651,6 +650,7 @@ plotrix::plotCI(x = l.targets$PropSick$Time, y = l.targets$PropSick$value,
 ```{r}
 MM.SickSicker <- function(params)
 {
+  v.n    <- c("Healthy", "Sick", "Sicker", "Dead")
   with(as.list(params), {
     cohort.tr <- matrix(
       c(
@@ -663,7 +663,7 @@ MM.SickSicker <- function(params)
       nrow=length(v.n), byrow=TRUE
     )
     diag(cohort.tr)     <- 1 - rowSums(cohort.tr)
-    markov(0:n.t, cohort.tr, c(1, 0, 0, 0))
+    markov(n.t, cohort.tr, c(1, 0, 0, 0))
   })
 }
 
